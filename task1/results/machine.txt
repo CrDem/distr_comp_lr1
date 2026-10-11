@@ -1,0 +1,8 @@
+platform: Linux-6.18.40.1-microsoft-standard-WSL2-x86_64-with-glibc2.39
+nproc: 16
+Model name:                              AMD Ryzen 7 5700X 8-Core Processor
+Thread(s) per core:                      2
+Core(s) per socket:                      8
+L2 cache:                                4 MiB (8 instances)
+L3 cache:                                32 MiB (1 instance)
+gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0

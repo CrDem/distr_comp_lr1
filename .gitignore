@@ -1,0 +1,5 @@
+__pycache__/
+.venv/
+task1/mandelbrot
+task1/mandelbrot_tsan
+task1/mandelbrot.csv
