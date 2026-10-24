@@ -1,0 +1,584 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>N-body viewer</title>
+<style>
+  :root {
+    --bg: #06080d;
+    --panel: rgba(15, 19, 28, 0.84);
+    --line: rgba(255, 255, 255, 0.09);
+    --text: #e8e9ee;
+    --muted: #9198a8;
+    --accent: #3987e5;
+    --control: #1b2231;
+    --control-hover: #263046;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: var(--bg); color: var(--text);
+    font: 13px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
+  canvas.dragging { cursor: grabbing; }
+  .panel {
+    position: fixed; background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  }
+  #info { top: 12px; left: 12px; padding: 10px 12px; max-width: min(360px, calc(100vw - 24px)); }
+  #info h1 { margin: 0 0 2px; font-size: 13px; font-weight: 600; }
+  #file { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #stats { margin-top: 6px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: pre; }
+  #settings { top: 12px; right: 12px; width: 236px; padding: 10px 12px; display: grid; gap: 9px; }
+  #settings .head { display: flex; justify-content: space-between; align-items: center; font-weight: 600; }
+  #settings .head button { padding: 0 8px; line-height: 20px; }
+  #settings.collapsed > :not(.head) { display: none; }
+  body.no-ui .panel { display: none !important; }
+  .row { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; color: var(--muted); }
+  .row output { color: var(--text); font-variant-numeric: tabular-nums; }
+  .row input[type=range] { grid-column: 1 / -1; width: 100%; accent-color: var(--accent); }
+  .check { display: flex; gap: 8px; align-items: center; color: var(--muted); cursor: pointer; }
+  .check input { accent-color: var(--accent); }
+  #bottom { left: 12px; right: 12px; bottom: 12px; padding: 8px 12px; display: flex; gap: 12px; align-items: center; }
+  #timeline { flex: 1; min-width: 0; accent-color: var(--accent); }
+  #time { min-width: 150px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+  button, select {
+    background: var(--control); color: var(--text); border: 1px solid var(--line); border-radius: 6px;
+    padding: 5px 10px; font: inherit; cursor: pointer;
+  }
+  button:hover, select:hover { background: var(--control-hover); }
+  #play { width: 38px; }
+  #drop {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: rgba(6, 8, 13, 0.72); z-index: 5;
+  }
+  #drop.hidden { display: none; }
+  #drop .box {
+    border: 1.5px dashed rgba(255, 255, 255, 0.25); border-radius: 14px; padding: 28px 34px;
+    text-align: center; max-width: min(460px, calc(100vw - 32px)); background: var(--panel);
+  }
+  #drop .box p { margin: 6px 0; color: var(--muted); }
+  #drop.over .box { border-color: var(--accent); }
+  #help {
+    top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 14px 18px; z-index: 4;
+    width: min(380px, calc(100vw - 32px));
+  }
+  #help.hidden { display: none; }
+  #help h2 { margin: 0 0 8px; font-size: 13px; }
+  #help table { border-collapse: collapse; width: 100%; }
+  #help td { padding: 2px 0; color: var(--muted); }
+  #help td:first-child { color: var(--text); padding-right: 14px; white-space: nowrap; }
+  kbd { font: 12px ui-monospace, monospace; background: var(--control); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; }
+  @media (max-width: 700px) {
+    #settings { top: auto; bottom: 64px; right: 12px; left: 12px; width: auto; grid-template-columns: 1fr 1fr; }
+    #time { min-width: 0; }
+  }
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<div id="info" class="panel">
+  <h1>Задача N тел</h1>
+  <div id="file">файл не загружен</div>
+  <div id="stats"></div>
+</div>
+
+<div id="settings" class="panel">
+  <div class="head"><span>Настройки</span><button id="collapse" title="Свернуть">–</button></div>
+  <label class="row">Скорость <output id="speedOut"></output>
+    <input id="speed" type="range" min="0" max="100" value="50"></label>
+  <label class="row">Длина хвоста <output id="tailOut"></output>
+    <input id="tail" type="range" min="0" max="300" value="60"></label>
+  <label class="row">Размер точек <output id="sizeOut"></output>
+    <input id="size" type="range" min="0.5" max="8" step="0.1" value="2.2"></label>
+  <label class="row">Цвета
+    <select id="colors" style="grid-column: 1 / -1">
+      <option value="blocks2">2 группы (по номеру)</option>
+      <option value="blocks8" selected>8 групп (по номеру)</option>
+      <option value="mixed8">8 цветов вперемешку</option>
+      <option value="single">один цвет</option>
+    </select></label>
+  <label class="check"><input id="follow" type="checkbox"> следить за центром масс</label>
+  <label class="check"><input id="loop" type="checkbox" checked> зациклить</label>
+  <div style="display:flex; gap:8px">
+    <button id="fit" title="F">Вписать</button>
+    <button id="open">Открыть…</button>
+    <button id="helpBtn" title="H">?</button>
+  </div>
+  <input id="fileInput" type="file" accept=".csv,.txt" multiple hidden>
+</div>
+
+<div id="bottom" class="panel">
+  <button id="play" title="Пробел">▶</button>
+  <input id="timeline" type="range" min="0" max="0" value="0" step="1">
+  <span id="time">—</span>
+</div>
+
+<div id="help" class="panel hidden">
+  <h2>Управление</h2>
+  <table>
+    <tr><td>колесо / щипок</td><td>масштаб вокруг курсора</td></tr>
+    <tr><td>перетаскивание</td><td>перемещение</td></tr>
+    <tr><td>двойной клик, <kbd>F</kbd></td><td>вписать в экран</td></tr>
+    <tr><td><kbd>Пробел</kbd></td><td>пуск / пауза</td></tr>
+    <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>кадр назад / вперёд (с <kbd>Shift</kbd> — по 10)</td></tr>
+    <tr><td><kbd>Home</kbd> <kbd>End</kbd></td><td>в начало / в конец</td></tr>
+    <tr><td><kbd>+</kbd> <kbd>−</kbd></td><td>скорость</td></tr>
+    <tr><td><kbd>[</kbd> <kbd>]</kbd></td><td>длина хвоста</td></tr>
+    <tr><td><kbd>C</kbd></td><td>следить за центром масс</td></tr>
+    <tr><td><kbd>U</kbd></td><td>скрыть / показать интерфейс</td></tr>
+    <tr><td><kbd>H</kbd></td><td>эта справка</td></tr>
+  </table>
+  <p style="color:var(--muted); margin:10px 0 0">Можно перетащить на страницу CSV с траекториями и входной .txt с массами — тогда размер точки зависит от массы.</p>
+</div>
+
+<div id="drop">
+  <div class="box">
+    <div style="font-size:15px; font-weight:600">Перетащите сюда CSV с траекториями</div>
+    <p>и, по желанию, входной .txt — по нему точки получат размер по массе</p>
+    <p><button id="open2">Выбрать файлы…</button></p>
+    <p id="progress"></p>
+  </div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+  const PALETTE = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#3fae3f", "#9085e9", "#e66767"];
+  const TWO = ["#5aa2ff", "#ff8a4c"];
+  const SINGLE = "#cfe2ff";
+  const BG = "#06080d";
+
+  const $ = (id) => document.getElementById(id);
+  const canvas = $("view");
+  const ctx = canvas.getContext("2d");
+
+  const st = {
+    frames: [], times: [], n: 0, cur: 0, playing: false, loop: true, follow: false,
+    speed: 30, tail: 60, size: 2.2, colorMode: "blocks8",
+    masses: null, radii: null, groups: [],
+    cam: { x: 0, y: 0, scale: 1 }, fileName: "",
+  };
+  let dpr = window.devicePixelRatio || 1;
+
+  // ---------- loading ----------
+  async function loadStream(stream, total, onLine) {
+    const reader = stream.getReader();
+    const dec = new TextDecoder();
+    let rest = "", loaded = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      loaded += value.length;
+      rest += dec.decode(value, { stream: true });
+      let start = 0, nl;
+      while ((nl = rest.indexOf("\n", start)) >= 0) {
+        onLine(rest.slice(start, nl));
+        start = nl + 1;
+      }
+      rest = rest.slice(start);
+      $("progress").textContent = `загружено ${(loaded / 1048576).toFixed(1)} МБ` +
+        (total ? ` из ${(total / 1048576).toFixed(1)}` : "");
+      await new Promise(requestAnimationFrame);
+    }
+    rest += dec.decode();
+    if (rest.trim()) onLine(rest);
+  }
+
+  async function loadTrajectories(stream, total, name) {
+    const frames = [], times = [];
+    let n = -1;
+    $("drop").classList.remove("hidden");
+    await loadStream(stream, total, (line) => {
+      line = line.trim();
+      if (!line) return;
+      const parts = line.split(",");
+      if (n < 0) {
+        if (parts[0] !== "t" || parts.length % 2 !== 1) throw new Error("ожидался заголовок t,x1,y1,…");
+        n = (parts.length - 1) / 2;
+        return;
+      }
+      if (parts.length !== 2 * n + 1) return;
+      const a = new Float64Array(2 * n);
+      for (let k = 0; k < 2 * n; k++) a[k] = +parts[k + 1];
+      times.push(+parts[0]);
+      frames.push(a);
+    });
+    if (!frames.length) throw new Error("в файле нет кадров");
+    Object.assign(st, { frames, times, n, cur: 0, fileName: name });
+    if (st.masses && st.masses.length !== n) st.masses = null;
+    $("timeline").max = frames.length - 1;
+    $("file").textContent = name;
+    $("drop").classList.add("hidden");
+    rebuildGroups();
+    rebuildRadii();
+    fit();
+    setPlaying(true);
+  }
+
+  async function loadMasses(text) {
+    const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    const n = parseInt(lines[0], 10);
+    const masses = new Float64Array(n);
+    for (let i = 0; i < n; i++) masses[i] = parseFloat(lines[i + 1]);
+    st.masses = masses;
+    rebuildRadii();
+  }
+
+  async function handleFiles(files) {
+    const list = [...files];
+    const txt = list.find((f) => /\.txt$/i.test(f.name));
+    const csv = list.find((f) => !/\.txt$/i.test(f.name));
+    try {
+      if (txt) await loadMasses(await txt.text());
+      if (csv) await loadTrajectories(csv.stream(), csv.size, csv.name);
+    } catch (e) {
+      $("progress").textContent = "ошибка: " + e.message;
+    }
+  }
+
+  async function loadFromUrl() {
+    const params = new URLSearchParams(location.search);
+    const file = params.get("file"), masses = params.get("masses");
+    if (!file) return;
+    try {
+      if (masses) await loadMasses(await (await fetch(masses)).text());
+      const resp = await fetch(file);
+      if (!resp.ok) throw new Error(`${file}: HTTP ${resp.status}`);
+      await loadTrajectories(resp.body, +resp.headers.get("content-length") || 0, params.get("name") || file);
+    } catch (e) {
+      $("progress").textContent = "ошибка: " + e.message;
+    }
+  }
+
+  // ---------- derived data ----------
+  function rebuildGroups() {
+    const n = st.n, mode = st.colorMode;
+    const colors = mode === "single" ? [SINGLE] : mode === "blocks2" ? TWO : PALETTE;
+    const k = Math.min(colors.length, Math.max(1, n));
+    const groups = Array.from({ length: k }, (_, g) => ({ color: colors[g], idx: [] }));
+    for (let i = 0; i < n; i++) {
+      const g = mode === "mixed8" ? i % k : Math.min(k - 1, Math.floor(i * k / n));
+      groups[g].idx.push(i);
+    }
+    st.groups = groups.filter((g) => g.idx.length);
+  }
+
+  function rebuildRadii() {
+    const n = st.n;
+    const r = new Float64Array(n).fill(1);
+    if (st.masses && st.masses.length === n) {
+      const sorted = [...st.masses].sort((a, b) => a - b);
+      const median = sorted[Math.floor(n / 2)] || 1;
+      for (let i = 0; i < n; i++) {
+        const k = 1 + 0.55 * Math.log10(st.masses[i] / median);
+        r[i] = Math.min(6, Math.max(0.6, k));
+      }
+    }
+    st.radii = r;
+  }
+
+  function headPositions() {
+    const F = st.frames.length;
+    const f = Math.min(Math.floor(st.cur), F - 1), frac = st.cur - f;
+    const A = st.frames[f];
+    if (frac <= 0 || f + 1 >= F) return A;
+    const B = st.frames[f + 1], out = new Float64Array(A.length);
+    for (let k = 0; k < A.length; k++) out[k] = A[k] + (B[k] - A[k]) * frac;
+    return out;
+  }
+
+  function centre(P) {
+    let sx = 0, sy = 0, sm = 0;
+    for (let i = 0; i < st.n; i++) {
+      const m = st.masses ? st.masses[i] : 1;
+      sx += m * P[2 * i]; sy += m * P[2 * i + 1]; sm += m;
+    }
+    return [sx / sm, sy / sm];
+  }
+
+  // ---------- camera ----------
+  function fit() {
+    if (!st.frames.length) return;
+    const P = headPositions(), n = st.n;
+    const xs = new Float64Array(n), ys = new Float64Array(n);
+    for (let i = 0; i < n; i++) { xs[i] = P[2 * i]; ys[i] = P[2 * i + 1]; }
+    xs.sort(); ys.sort();
+    const q = n > 20 ? 0.02 : 0;
+    const lo = Math.floor(q * (n - 1)), hi = Math.ceil((1 - q) * (n - 1));
+    let x0 = xs[lo], x1 = xs[hi], y0 = ys[lo], y1 = ys[hi];
+    let w = x1 - x0, h = y1 - y0;
+    if (!(w > 0) && !(h > 0)) { w = h = Math.max(Math.abs(x0), Math.abs(y0), 1); }
+    w = w || h; h = h || w;
+    st.cam.x = (x0 + x1) / 2;
+    st.cam.y = (y0 + y1) / 2;
+    st.cam.scale = 0.8 * Math.min(canvas.width / w, (canvas.height * 0.8) / h);
+  }
+
+  function zoomAt(sx, sy, factor) {
+    const c = st.cam;
+    const wx = c.x + (sx - canvas.width / 2) / c.scale;
+    const wy = c.y - (sy - canvas.height / 2) / c.scale;
+    c.scale *= factor;
+    c.x = wx - (sx - canvas.width / 2) / c.scale;
+    c.y = wy + (sy - canvas.height / 2) / c.scale;
+  }
+
+  // ---------- rendering ----------
+  function niceLength(len) {
+    const p = Math.pow(10, Math.floor(Math.log10(len)));
+    const m = len / p >= 5 ? 5 : len / p >= 2 ? 2 : 1;
+    return m * p;
+  }
+
+  function fmtNum(v) {
+    const a = Math.abs(v);
+    if (a !== 0 && (a >= 1e5 || a < 1e-3)) return v.toExponential(2).replace("e+", "e");
+    return +v.toPrecision(4) + "";
+  }
+
+  function fmtTime(t) {
+    let s = `t = ${fmtNum(t)} с`;
+    if (t >= 2 * 86400) s += ` (${fmtNum(t / 86400)} сут)`;
+    return s;
+  }
+
+  function render() {
+    const W = canvas.width, H = canvas.height;
+    ctx.globalCompositeOperation = "source-over";
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = BG;
+    ctx.fillRect(0, 0, W, H);
+    if (!st.frames.length) return;
+
+    const F = st.frames.length;
+    const f = Math.min(Math.floor(st.cur), F - 1);
+    const head = headPositions();
+    if (st.follow) [st.cam.x, st.cam.y] = centre(head);
+
+    const s = st.cam.scale, ox = W / 2 - st.cam.x * s, oy = H / 2 + st.cam.y * s;
+    const base = st.size * dpr;
+    ctx.globalCompositeOperation = "lighter";
+    ctx.lineCap = "butt";
+
+    const L = Math.min(st.tail, f);
+    for (let a = L; a >= 0; a--) {
+      const P = st.frames[f - a];
+      const Q = a === 0 ? head : st.frames[f - a + 1];
+      if (P === Q) continue;
+      const k = 1 - a / (L + 1);
+      ctx.globalAlpha = 0.85 * k * k;
+      ctx.lineWidth = Math.max(0.5 * dpr, base * 0.9 * k);
+      for (const g of st.groups) {
+        ctx.strokeStyle = g.color;
+        ctx.beginPath();
+        for (const i of g.idx) {
+          ctx.moveTo(P[2 * i] * s + ox, oy - P[2 * i + 1] * s);
+          ctx.lineTo(Q[2 * i] * s + ox, oy - Q[2 * i + 1] * s);
+        }
+        ctx.stroke();
+      }
+    }
+
+    const big = [];
+    for (const [alpha, grow] of [[0.22, 2.4], [1, 0.7]]) {
+      ctx.globalAlpha = alpha;
+      for (const g of st.groups) {
+        ctx.fillStyle = alpha === 1 ? "#ffffff" : g.color;
+        ctx.beginPath();
+        for (const i of g.idx) {
+          const x = head[2 * i] * s + ox, y = oy - head[2 * i + 1] * s;
+          if (x < -80 || y < -80 || x > W + 80 || y > H + 80) continue;
+          if (st.radii[i] > 2) {
+            if (alpha === 1) big.push([x, y, base * st.radii[i], g.color]);
+            continue;
+          }
+          const r = base * st.radii[i] * grow;
+          ctx.moveTo(x + r, y);
+          ctx.arc(x, y, r, 0, 2 * Math.PI);
+        }
+        ctx.fill();
+      }
+    }
+    ctx.globalAlpha = 1;
+    for (const [x, y, r, color] of big) {
+      const grad = ctx.createRadialGradient(x, y, 0, x, y, r * 3);
+      grad.addColorStop(0, "rgba(255,255,255,1)");
+      grad.addColorStop(0.18, "rgba(255,255,255,0.9)");
+      grad.addColorStop(0.32, color + "99");
+      grad.addColorStop(1, color + "00");
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(x, y, r * 3, 0, 2 * Math.PI);
+      ctx.fill();
+    }
+
+    ctx.globalCompositeOperation = "source-over";
+    ctx.globalAlpha = 1;
+    const len = niceLength(140 * dpr / s), px = len * s;
+    const bx = 24 * dpr, by = H - 78 * dpr;
+    ctx.strokeStyle = "rgba(232,233,238,0.8)";
+    ctx.lineWidth = 1.5 * dpr;
+    ctx.beginPath();
+    ctx.moveTo(bx, by - 5 * dpr); ctx.lineTo(bx, by); ctx.lineTo(bx + px, by); ctx.lineTo(bx + px, by - 5 * dpr);
+    ctx.stroke();
+    ctx.fillStyle = "rgba(232,233,238,0.85)";
+    ctx.font = `${12 * dpr}px system-ui, sans-serif`;
+    ctx.fillText(`${fmtNum(len)} м`, bx + 4 * dpr, by - 8 * dpr);
+  }
+
+  // ---------- loop ----------
+  let last = performance.now(), fpsAcc = 0, fpsFrames = 0, fps = 0, lastUi = 0;
+  function tick(now) {
+    const dtReal = Math.min(0.1, (now - last) / 1000);
+    last = now;
+    const F = st.frames.length;
+    if (st.playing && F > 1) {
+      st.cur += st.speed * dtReal;
+      if (st.cur >= F - 1) {
+        if (st.loop) st.cur = 0;
+        else { st.cur = F - 1; setPlaying(false); }
+      }
+    }
+    render();
+    fpsAcc += dtReal; fpsFrames++;
+    if (fpsAcc >= 0.5) { fps = fpsFrames / fpsAcc; fpsAcc = 0; fpsFrames = 0; }
+    if (now - lastUi > 80) { updateUi(); lastUi = now; }
+    requestAnimationFrame(tick);
+  }
+
+  function updateUi() {
+    if (!st.frames.length) return;
+    const f = Math.min(Math.floor(st.cur), st.frames.length - 1);
+    $("timeline").value = f;
+    $("time").textContent = fmtTime(st.times[f]);
+    $("stats").textContent =
+      `тел: ${st.n}   кадр: ${f + 1} / ${st.frames.length}\n` +
+      `масштаб: ${fmtNum(1 / st.cam.scale * dpr)} м/пикс   ${fps.toFixed(0)} fps`;
+  }
+
+  // ---------- controls ----------
+  function setPlaying(p) {
+    st.playing = p && st.frames.length > 1;
+    $("play").textContent = st.playing ? "❚❚" : "▶";
+  }
+
+  function speedFromSlider(v) { return Math.pow(10, -0.5 + 3 * v / 100); }
+  function sliderFromSpeed(sp) { return Math.round((Math.log10(sp) + 0.5) * 100 / 3); }
+
+  function syncControls() {
+    $("speedOut").textContent = `${fmtNum(st.speed)} кадр/с`;
+    $("tailOut").textContent = `${st.tail} кадров`;
+    $("sizeOut").textContent = `${st.size.toFixed(1)} пикс`;
+    $("speed").value = sliderFromSpeed(st.speed);
+    $("tail").value = st.tail;
+    $("follow").checked = st.follow;
+  }
+
+  $("speed").addEventListener("input", (e) => { st.speed = speedFromSlider(+e.target.value); syncControls(); });
+  $("tail").addEventListener("input", (e) => { st.tail = +e.target.value; syncControls(); });
+  $("size").addEventListener("input", (e) => { st.size = +e.target.value; syncControls(); });
+  $("colors").addEventListener("change", (e) => { st.colorMode = e.target.value; rebuildGroups(); });
+  $("follow").addEventListener("change", (e) => { st.follow = e.target.checked; });
+  $("loop").addEventListener("change", (e) => { st.loop = e.target.checked; });
+  $("fit").addEventListener("click", fit);
+  $("play").addEventListener("click", () => setPlaying(!st.playing));
+  $("timeline").addEventListener("input", (e) => { st.cur = +e.target.value; });
+  for (const id of ["open", "open2"]) $(id).addEventListener("click", () => $("fileInput").click());
+  $("fileInput").addEventListener("change", (e) => handleFiles(e.target.files));
+  $("helpBtn").addEventListener("click", () => $("help").classList.toggle("hidden"));
+  $("collapse").addEventListener("click", () => {
+    const c = $("settings").classList.toggle("collapsed");
+    $("collapse").textContent = c ? "+" : "–";
+  });
+
+  window.addEventListener("dragover", (e) => { e.preventDefault(); $("drop").classList.remove("hidden"); $("drop").classList.add("over"); });
+  window.addEventListener("dragleave", (e) => { if (!e.relatedTarget) { $("drop").classList.remove("over"); if (st.frames.length) $("drop").classList.add("hidden"); } });
+  window.addEventListener("drop", (e) => { e.preventDefault(); $("drop").classList.remove("over"); handleFiles(e.dataTransfer.files); });
+
+  window.addEventListener("keydown", (e) => {
+    if (e.target.tagName === "INPUT" && e.target.type !== "range" && e.target.type !== "checkbox") return;
+    const F = st.frames.length, step = e.shiftKey ? 10 : 1;
+    switch (e.key) {
+      case " ": setPlaying(!st.playing); break;
+      case "ArrowRight": setPlaying(false); st.cur = Math.min(F - 1, Math.floor(st.cur) + step); break;
+      case "ArrowLeft": setPlaying(false); st.cur = Math.max(0, Math.ceil(st.cur) - step); break;
+      case "Home": st.cur = 0; break;
+      case "End": st.cur = Math.max(0, F - 1); break;
+      case "+": case "=": st.speed = Math.min(300, st.speed * 1.5); syncControls(); break;
+      case "-": case "_": st.speed = Math.max(0.3, st.speed / 1.5); syncControls(); break;
+      case "]": st.tail = Math.min(300, st.tail + 10); syncControls(); break;
+      case "[": st.tail = Math.max(0, st.tail - 10); syncControls(); break;
+      case "f": case "F": case "а": case "А": fit(); break;
+      case "c": case "C": case "с": case "С": st.follow = !st.follow; syncControls(); break;
+      case "h": case "H": case "?": case "р": case "Р": $("help").classList.toggle("hidden"); break;
+      case "u": case "U": case "г": case "Г": document.body.classList.toggle("no-ui"); break;
+      case "Escape": $("help").classList.add("hidden"); break;
+      default: return;
+    }
+    e.preventDefault();
+  });
+
+  const pointers = new Map();
+  let pinchDist = 0;
+  canvas.addEventListener("pointerdown", (e) => {
+    canvas.setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    canvas.classList.add("dragging");
+    if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      pinchDist = Math.hypot(a.x - b.x, a.y - b.y);
+    }
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    const p = pointers.get(e.pointerId);
+    if (!p) return;
+    if (pointers.size === 1) {
+      st.follow = false; syncControls();
+      st.cam.x -= (e.clientX - p.x) * dpr / st.cam.scale;
+      st.cam.y += (e.clientY - p.y) * dpr / st.cam.scale;
+    }
+    p.x = e.clientX; p.y = e.clientY;
+    if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      const d = Math.hypot(a.x - b.x, a.y - b.y);
+      if (pinchDist > 0) zoomAt((a.x + b.x) / 2 * dpr, (a.y + b.y) / 2 * dpr, d / pinchDist);
+      pinchDist = d;
+    }
+  });
+  const release = (e) => {
+    pointers.delete(e.pointerId);
+    if (!pointers.size) canvas.classList.remove("dragging");
+    pinchDist = 0;
+  };
+  canvas.addEventListener("pointerup", release);
+  canvas.addEventListener("pointercancel", release);
+  canvas.addEventListener("dblclick", fit);
+  canvas.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const k = e.deltaMode === 1 ? 40 : 1;
+    zoomAt(e.clientX * dpr, e.clientY * dpr, Math.exp(-e.deltaY * k * 0.0015));
+  }, { passive: false });
+
+  function resize() {
+    dpr = window.devicePixelRatio || 1;
+    const w = Math.round(canvas.clientWidth * dpr), h = Math.round(canvas.clientHeight * dpr);
+    if (canvas.width !== w || canvas.height !== h) {
+      const k = canvas.width ? w / canvas.width : 1;
+      canvas.width = w; canvas.height = h;
+      st.cam.scale *= k;
+    }
+  }
+  window.addEventListener("resize", resize);
+
+  resize();
+  syncControls();
+  requestAnimationFrame(tick);
+  loadFromUrl();
+})();
+</script>
+</body>
+</html>

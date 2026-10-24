@@ -3,3 +3,11 @@ __pycache__/
 task1/mandelbrot
 task1/mandelbrot_tsan
 task1/mandelbrot.csv
+task2/nbody
+task2/nbody_tsan
+task2/*.csv
+task2/data/
+task2_reserve/
+task3/ll_pthread
+task3/ll_my
+task3/ll_my_tsan
